@@ -37,7 +37,8 @@ rx.range <- function(rx, min.allo = 0, max.allo = 1, weight.sum = 1){
 # `contraction` shrinks the range of exp. ret. values checked by a small amount because
 # trouble tends to arrise when the solver hits the extremes of that range
 eff.frontier <- function(time.series, min.allo = 0, max.allo = 1, 
-                         weight.sum = 1, n.step = 100, contraction = 0.99){
+                         weight.sum = 1, n.step = 100, contraction = 0.99, 
+                         include.lower.branch = FALSE){
   n.asset <- dim(time.series)[2]
   if(is.null(colnames(time.series))){
     colnames(time.series) <- paste("A", 1:n.asset, sep = "") # name the assets if they aren't already
@@ -79,7 +80,12 @@ eff.frontier <- function(time.series, min.allo = 0, max.allo = 1,
                     c(w, "sd" = stdev, "rx" = rx)
                   })) # sapply solve.QP over all the rx values
   colnames(ftr) <- c(colnames(time.series), "sd", "rx") # give names
-  ftr
+  if(include.lower.branch){
+    ftr
+  }else{
+    lower.rx <- ftr[,"rx"][which.min(ftr[,"sd"])]
+    ftr[ftr[,"rx"] >= lower.rx,]
+  }
 }
 
 folio.optim <- function(rx.goal, time.series, min.allo = 0, max.allo = 1, weight.sum = 1){
