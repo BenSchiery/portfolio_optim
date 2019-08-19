@@ -36,11 +36,6 @@ rx.range <- function(rx, min.allo = 0, max.allo = 1, weight.sum = 1){
 # minimizes portfolio standard deviation at a sequence of portfolio expected return values
 # `contraction` shrinks the range of exp. ret. values checked by a small amount because
 # trouble tends to arrise when the solver hits the extremes of that range
-min.allo = 0
-max.allo = 1
-weight.sum = 2
-n.step = 100
-contraction = 0.99
 eff.frontier <- function(time.series, min.allo = 0, max.allo = 1, 
                          weight.sum = 1, n.step = 100, contraction = 0.99){
   n.asset <- dim(time.series)[2]
@@ -51,12 +46,13 @@ eff.frontier <- function(time.series, min.allo = 0, max.allo = 1,
   if(max.allo * n.asset < weight.sum){stop("Maximum allocation too low for given weight sum constraint.")}
   
   Dmat <- matrix(nearPD(cov(time.series))$mat, ncol = n.asset) # quadratic term
+  cov.mat.norm <- norm(Dmat)
   dvec <- colMeans(time.series) # linear term
   Amat <- cbind("sum.col" = rep(1, times = n.asset),
                 "rx.col" = dvec,
                 "min.allo" = diag(n.asset),
                 "max.allo" = -diag(n.asset)) # constraint matrix
-  meq <- 1 # number of equality constraints
+  meq <- 2 # number of equality constraints
   # range of possible expected return values for portfolios of the given assets
   rx.rng <- rx.range(rx = dvec,
                      min.allo = min.allo,
@@ -72,8 +68,8 @@ eff.frontier <- function(time.series, min.allo = 0, max.allo = 1,
                     bvec <- c(weight.sum, rx, 
                               rep(min.allo, times = n.asset), 
                               -rep(max.allo, times = n.asset))
-                    w <- solve.QP(Dmat = Dmat,
-                                  dvec = dvec, 
+                    w <- solve.QP(Dmat = Dmat / cov.mat.norm,
+                                  dvec = dvec / cov.mat.norm, 
                                   Amat = Amat, 
                                   bvec = bvec, 
                                   meq = meq)$solution
@@ -81,10 +77,7 @@ eff.frontier <- function(time.series, min.allo = 0, max.allo = 1,
                     c(w, "sd" = stdev, "rx" = rx)
                   })) # apply solve.QP over all the rx values
   colnames(ftr) <- c(colnames(time.series), "sd", "rx") # give names
-  
-  sds <- ftr[,"sd"]
-  same.sds <- which(sds <= 0.999 * min(sds) + 0.001 * max(sds))
-  ftr[length(same.sds):n.step,]
+  ftr
 }
 
 folio.optim <- function(rx.goal, time.series, min.allo = 0, max.allo = 1, weight.sum = 1){
@@ -95,13 +88,14 @@ folio.optim <- function(rx.goal, time.series, min.allo = 0, max.allo = 1, weight
   if(min.allo * n.asset > weight.sum){stop("Minimum allocation too high for given weight sum constraint.")}
   if(max.allo * n.asset < weight.sum){stop("Maximum allocation too low for given weight sum constraint.")}
   
-  Dmat <- matrix(nearPD(cov(time.series))$mat, ncol = n.asset)
+  # Dmat <- matrix(nearPD(cov(time.series))$mat, ncol = n.asset)
+  Dmat <- cov(time.series)
   dvec <- colMeans(time.series)
   Amat <- cbind("sum.col" = rep(1, times = n.asset),
                 "rx.col" = dvec,
                 "min.allo" = diag(n.asset),
                 "max.allo" = -diag(n.asset))
-  meq <- 1
+  meq <- 2
   rx.rng <- rx.range(rx = dvec,
                      min.allo = min.allo,
                      max.allo = max.allo,
@@ -141,12 +135,12 @@ folio <- function(time.series){
 #### Generate a time series ####
 ################################
 
-n.asset <- 8
+n.asset <- 10
 
 time.series <- sapply(X = 1:n.asset,
-                       FUN = function(i){
-                         cumsum(rnorm(n = n.asset^2, sd = 10))
-                       })
+                      FUN = function(i){
+                        cumsum(rnorm(n = n.asset^2, sd = 10))
+                      })
 asset.names <- paste("A", 1:n.asset, sep = "")
 colnames(time.series) <- asset.names
 
