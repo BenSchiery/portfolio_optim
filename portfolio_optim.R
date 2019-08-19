@@ -52,7 +52,9 @@ eff.frontier <- function(time.series, min.allo = 0, max.allo = 1,
                 "rx.col" = dvec,
                 "min.allo" = diag(n.asset),
                 "max.allo" = -diag(n.asset)) # constraint matrix
-  meq <- 2 # number of equality constraints
+  # 2 equality constraints; sum(weights) = weight.sum AND 
+  # sum(weights * asset expected returns) = desired portfolio return (which are sapply'ed over)
+  meq <- 2
   # range of possible expected return values for portfolios of the given assets
   rx.rng <- rx.range(rx = dvec,
                      min.allo = min.allo,
@@ -75,7 +77,7 @@ eff.frontier <- function(time.series, min.allo = 0, max.allo = 1,
                                   meq = meq)$solution
                     stdev <- sqrt(t(w) %*% Dmat %*% w)
                     c(w, "sd" = stdev, "rx" = rx)
-                  })) # apply solve.QP over all the rx values
+                  })) # sapply solve.QP over all the rx values
   colnames(ftr) <- c(colnames(time.series), "sd", "rx") # give names
   ftr
 }
@@ -88,8 +90,7 @@ folio.optim <- function(rx.goal, time.series, min.allo = 0, max.allo = 1, weight
   if(min.allo * n.asset > weight.sum){stop("Minimum allocation too high for given weight sum constraint.")}
   if(max.allo * n.asset < weight.sum){stop("Maximum allocation too low for given weight sum constraint.")}
   
-  # Dmat <- matrix(nearPD(cov(time.series))$mat, ncol = n.asset)
-  Dmat <- cov(time.series)
+  Dmat <- matrix(nearPD(cov(time.series))$mat, ncol = n.asset)
   dvec <- colMeans(time.series)
   Amat <- cbind("sum.col" = rep(1, times = n.asset),
                 "rx.col" = dvec,
@@ -148,7 +149,7 @@ colnames(time.series) <- asset.names
 #### Plot the efficient frontier ####
 #####################################
 
-ftr <- eff.frontier(time.series = time.series)
+ftr <- eff.frontier(time.series = time.series, min.allo = 0, max.allo = 1, weight.sum = 1)
 
 psd <- ftr[,"sd"] # portfolio sd
 prx <- ftr[,"rx"] # portfolio exp. ret.
@@ -166,7 +167,7 @@ points(x = 0, y = 0, pch = 16, col = "red") # add origin for reference
 #### Test optimizer ####
 ########################
 
-rx.goal <- mean(prx)
+rx.goal <- mean(prx[prx > 0])
 w <- folio.optim(rx.goal = rx.goal, time.series = time.series)
 pt <- folio(time.series)(weights = w)
 points(x = pt[1], y = pt[2], pch = 16, col = "cyan", cex = 2)
