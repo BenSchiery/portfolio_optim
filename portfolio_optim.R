@@ -4,7 +4,7 @@ library(quadprog) # need the solve.QP() function
 library(Matrix) # need the nearPD() function
 
 # a function to find the range of expected returns that are possible given individual assets' expected 
-# returns and weight constraints
+# returns (rx) and weight constraints
 rx.range <- function(rx, min.allo = 0, max.allo = 1, weight.sum = 1){
   # to get the minimum expected return of the portfolio, apply as much weight as is allowable to the 
   # assets with the lowest individual return rates
@@ -18,6 +18,7 @@ rx.range <- function(rx, min.allo = 0, max.allo = 1, weight.sum = 1){
     x <- x - y # decrement the amount of weight we have left to apply
   }
   
+  # similarly, apply as much weight as is allowable to the assets with the highest individual return rates
   rx <- sort(rx, decreasing = T)
   x <- weight.sum - length(rx) * min.allo
   rx.max <- sum(rx * min.allo)
@@ -48,11 +49,33 @@ eff.frontier <- function(returns, min.allo = 0, max.allo = 1,
   
   Dmat <- matrix(nearPD(cov(returns))$mat, ncol = n.asset) # quadratic term
   cov.mat.norm <- norm(Dmat)
-  dvec <- colMeans(returns) # linear term
+  
+  # if not including the lower branch, we find the weights which minimize 
+  # portfolio SD without regard for portfolio returns, then find the return 
+  # rate of a portfolio having those weights; this will be the lower bound 
+  # on the sequence of return rates for which we will minimize portfolio SD
+  if(!include.lower.branch){
+    dvec <- matrix(0, nrow = n.asset, ncol = 1) # a dvec of zeroes makes us disregard returns
+    Amat <- cbind("sum.col" = rep(1, times = n.asset),
+                  "min.allo" = diag(n.asset),
+                  "max.allo" = -diag(n.asset)) # constraint matrix without a return constraint
+    bvec <- c(weight.sum,
+              rep(min.allo, times = n.asset), 
+              -rep(max.allo, times = n.asset)) # bvec includes no goal return rate 
+    meq <- 1 # only the first constraint demands equality, sum(weights) = weight.sum
+    w <- solve.QP(Dmat = Dmat / cov.mat.norm,
+                  dvec = dvec, 
+                  Amat = Amat, 
+                  bvec = bvec, 
+                  meq = meq)$solution # the weights which minimize portfolio SD given our constraints
+    rx.lower <- sum(w * colMeans(returns)) # soon-to-be lower bound on expected returns range
+  }
+  
+  dvec <- colMeans(returns, na.rm = T) # linear term
   Amat <- cbind("sum.col" = rep(1, times = n.asset),
                 "rx.col" = dvec,
                 "min.allo" = diag(n.asset),
-                "max.allo" = -diag(n.asset)) # constraint matrix
+                "max.allo" = -diag(n.asset)) # constraint matrix _with_ a return constraint
   # 2 equality constraints; sum(weights) = weight.sum AND 
   # sum(weights * asset expected returns) = desired portfolio return (which are sapply'ed over)
   meq <- 2
@@ -60,7 +83,11 @@ eff.frontier <- function(returns, min.allo = 0, max.allo = 1,
   rx.rng <- rx.range(rx = dvec,
                      min.allo = min.allo,
                      max.allo = max.allo,
-                     weight.sum = weight.sum)  
+                     weight.sum = weight.sum) 
+  
+  if(!include.lower.branch){
+    rx.rng[1] <- rx.lower
+  } # replace the lower bound if needed
   
   rx.rng <- (rx.rng - mean(rx.rng)) * contraction + mean(rx.rng) # shrink the range a little bit
   # generate a sequence of exp. ret. values at which to minimize portfolio stdev
@@ -68,6 +95,7 @@ eff.frontier <- function(returns, min.allo = 0, max.allo = 1,
   
   ftr <- t(sapply(X = rx.seq,
                   FUN = function(rx){
+                    # change bvec to reflect changing goal for return rate
                     bvec <- c(weight.sum, rx, 
                               rep(min.allo, times = n.asset), 
                               -rep(max.allo, times = n.asset))
@@ -75,17 +103,13 @@ eff.frontier <- function(returns, min.allo = 0, max.allo = 1,
                                   dvec = dvec / cov.mat.norm, 
                                   Amat = Amat, 
                                   bvec = bvec, 
-                                  meq = meq)$solution
-                    stdev <- sqrt(t(w) %*% Dmat %*% w)
+                                  meq = meq)$solution # optimal weights
+                    stdev <- sqrt(t(w) %*% Dmat %*% w) # portfolio SD at optimal weights
                     c(w, "sd" = stdev, "rx" = rx)
                   })) # sapply solve.QP over all the rx values
   colnames(ftr) <- c(colnames(returns), "sd", "rx") # give names
-  if(include.lower.branch){
-    ftr
-  }else{
-    lower.rx <- ftr[,"rx"][which.min(ftr[,"sd"])]
-    ftr[ftr[,"rx"] >= lower.rx,]
-  }
+  
+  ftr
 }
 
 folio.optim <- function(rx.goal, returns, min.allo = 0, max.allo = 1, weight.sum = 1){
@@ -156,16 +180,20 @@ colnames(time.series) <- asset.names
 #### Plot the efficient frontier ####
 #####################################
 
-ftr <- eff.frontier(returns = time.series, min.allo = 0, max.allo = 1, weight.sum = 1)
+ftr <- eff.frontier(returns = time.series, 
+                    min.allo = 0, 
+                    max.allo = 1, 
+                    weight.sum = 1, 
+                    include.lower.branch = F)
 
 psd <- ftr[,"sd"] # portfolio sd
 prx <- ftr[,"rx"] # portfolio exp. ret.
-x.min <- min(0, psd)
-x.max <- max(0, psd)
-y.min <- min(0, prx)
-y.max <- max(0, prx)
+bbox <- c("xmin" = min(0, psd),
+          "xmax" = max(0, psd),
+          "ymin" = min(0, prx),
+          "ymax" = max(0, prx)) # bounding box for graph
 plot(x = psd, y = prx, type = "l", lwd = 2, 
-     xlim = c(x.min, x.max), ylim = c(y.min, y.max),
+     xlim = bbox[1:2], ylim = bbox[3:4],
      xlab = "Portfolio SD", ylab = "Portfolio Expected Return",
      main = "Efficient Frontier")
 points(x = 0, y = 0, pch = 16, col = "red") # add origin for reference
